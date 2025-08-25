@@ -1,1 +1,79 @@
+<<<<<<< HEAD
 
+=======
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Markets – Live Watch</title>
+  <link rel="stylesheet" href="style.css" />
+
+  <!-- Icons -->
+  <script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.js" defer></script>
+  <!-- Charts -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
+  <!-- App -->
+  <script src="app.js?v=1" defer></script>
+</head>
+<body>
+  <header class="hdr">
+    <div class="container hdr__row">
+      <div class="brand">
+        <div class="brand__dot"></div>
+        <div class="brand__name">Markets <span>Live</span></div>
+      </div>
+
+      <div class="toolbar">
+        <div class="search">
+          <i data-lucide="search"></i>
+          <input id="q" placeholder="Search stocks, crypto, forex (e.g. INTC, COINBASE:BTC-USD, OANDA:XAU_USD)..." />
+          <div id="suggest" class="suggest"></div>
+        </div>
+
+        <button id="btnToggleView" class="btn" title="Toggle grid/list">
+          <i data-lucide="layout-grid"></i>
+        </button>
+        <button id="btnEUR" class="btn" title="Toggle € view">
+          <i data-lucide="euro"></i><span id="eurLabel">EUR</span>
+        </button>
+        <button id="btnSettings" class="btn" title="Settings">
+          <i data-lucide="settings-2"></i>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container main">
+    <div id="board" class="board grid"></div>
+  </main>
+
+  <!-- Settings -->
+  <dialog id="settingsDlg">
+    <form method="dialog" class="card">
+      <h3>Data Provider</h3>
+      <label class="row">
+        <span>Provider</span>
+        <select id="provider">
+          <option value="finnhub">Finnhub (free key)</option>
+          <option value="twelvedata">Twelve Data (free key)</option>
+        </select>
+      </label>
+      <label class="row">
+        <span>API Key</span>
+        <input id="apiKey" placeholder="Paste your API key" />
+      </label>
+      <p class="hint">
+        Gold: <code>OANDA:XAU_USD</code> (Finnhub) oder <code>XAU/USD</code> (Twelve Data).
+      </p>
+      <menu>
+        <button id="saveSettings" class="btn primary">Save</button>
+        <button class="btn">Close</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <div id="toasts" class="toasts"></div>
+</body>
+</html>
+>>>>>>> 3948653 (First version)
