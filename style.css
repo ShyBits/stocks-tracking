@@ -68,7 +68,17 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:14px/
 /* Cards */
 .card{background:var(--glass);border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 40px rgba(0,0,0,.35)}
 .tile{padding:12px}
-.tile__head{display:flex;align-items:center;gap:8px}
+.tile__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tile__head .logo {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  object-fit: contain;
+}
 .tag{font:12px/1.2 ui-monospace,monospace;color:var(--muted);border:1px solid var(--border);padding:2px 6px;border-radius:8px}
 .name{font-weight:600}
 .grow{margin-left:auto}
@@ -95,3 +105,20 @@ dialog menu{display:flex;justify-content:flex-end;gap:8px;margin-top:8px}
 /* Toasts */
 .toasts{position:fixed;bottom:16px;right:16px;display:flex;flex-direction:column;gap:8px;z-index:20}
 .toasts .card{padding:8px 12px}
+
+.tile__head { display:flex; align-items:center; gap:8px; }
+
+.tile__head .logo {
+  width: 22px; height: 22px;
+  border-radius: 6px;
+  object-fit: contain;
+  background: var(--surface-2);
+  padding: 2px;
+  border: 1px solid var(--border);
+}
+
+.tile__head .logo.ph {
+  display:flex; align-items:center; justify-content:center;
+  font-weight:700; font-size:12px;
+  color: var(--muted);
+}
