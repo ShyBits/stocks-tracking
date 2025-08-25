@@ -15,7 +15,57 @@ localStorage.setItem(LS.KEY, apiKey);
 let data = {};          // sym -> { last, prevClose, t, ccy, history:[{t, p}] }
 let usdEur = 0.9;       // live-updated below
 const REFRESH_MS = 30_000;
+let dynamicRefresh = REFRESH_MS;
+let backoffUntil = 0;
 
+async function fetchJSON(url, opts = {}){
+  const r = await fetch(url, {
+    ...opts,
+    cache: "no-store",
+    headers: { "accept": "application/json", ...(opts.headers||{}) }
+  });
+  const ct = r.headers.get("content-type") || "";
+  if (!r.ok){
+    const txt = await r.text().catch(()=> "");
+    // If we got HTML back, surface a readable hint
+    if (ct.includes("text/html") || txt.startsWith("<")) {
+      throw new Error(`HTTP ${r.status} (HTML)`);
+    }
+    // Try to include JSON error
+    try { const j = JSON.parse(txt); throw new Error(j.error || j.message || `HTTP ${r.status}`); }
+    catch { throw new Error(`HTTP ${r.status}`); }
+  }
+  // Non-JSON body (rare)
+  if (!ct.includes("application/json")) {
+    const txt = await r.text().catch(()=> "");
+    if (txt.startsWith("<")) throw new Error("HTML response");
+    try { return JSON.parse(txt); } catch { throw new Error("Bad JSON"); }
+  }
+  return r.json();
+}
+function cryptoFallback(sym){
+  // COINBASE:BTC-USD -> BINANCE:BTCUSDT
+  const m = sym.match(/^([A-Z0-9_]+):([A-Z0-9-]+)$/i);
+  if (!m) return null;
+  const ex = m[1].toUpperCase(), pair = m[2].toUpperCase();
+  if (ex === "COINBASE" && pair === "BTC-USD") return "BINANCE:BTCUSDT";
+  if (ex === "COINBASE" && pair === "ETH-USD") return "BINANCE:ETHUSDT";
+  return null;
+}
+// basic retry with backoff for transient errors (429/5xx/HTML)
+async function withRetry(fn, {tries=3, delays=[250, 600, 1200]} = {}){
+  let lastErr;
+  for (let i=0; i<tries; i++){
+    try { return await fn(); } 
+    catch (e){
+      lastErr = e;
+      // don’t retry AbortError
+      if (e?.name === "AbortError") throw e;
+      if (i < tries-1) await new Promise(r=>setTimeout(r, delays[i] || 800));
+    }
+  }
+  throw lastErr;
+}
 // ===================== Providers =====================
 /** Provider interface: { search(q, {signal}), quote(sym), history(sym) } */
 const Providers = {
@@ -96,49 +146,80 @@ const Providers = {
     },
 
     async quote(sym){
-      const isFx = sym.startsWith("OANDA:");
-      const isCrypto = !isFx && sym.includes(":"); // e.g. COINBASE:BTC-USD
+        const isFx = sym.startsWith("OANDA:");
+        const isCrypto = !isFx && sym.includes(":");
 
-      if (isFx){
-        const url = `https://finnhub.io/api/v1/forex/quote?symbol=${encodeURIComponent(sym)}&token=${apiKey}`;
-        const r = await fetch(url); const j = await r.json();
-        if (j.error) throw new Error(j.error);
-        const last = +(j.c ?? j.ask ?? j.bid);
-        const prev = +(j.pc ?? last);
-        return { last, prevClose: prev, t: Date.now(), ccy: "USD" };
-      }
+        if (isFx){
+            const url = `https://finnhub.io/api/v1/forex/quote?symbol=${encodeURIComponent(sym)}&token=${apiKey}`;
+            const j = await withRetry(()=> fetchJSON(url));
+            const last = +(j.c ?? j.ask ?? j.bid);
+            const prev = +(j.pc ?? last);
+            return { last, prevClose: prev, t: Date.now(), ccy: "USD" };
+        }
 
-      if (isCrypto){
-        // no /crypto/quote -> last from latest candle
-        const to = Math.floor(Date.now()/1000);
-        const from = to - 60*60*24;
-        const url = `https://finnhub.io/api/v1/crypto/candle?symbol=${encodeURIComponent(sym)}&resolution=1&from=${from}&to=${to}&token=${apiKey}`;
-        const r = await fetch(url); const j = await r.json();
-        if (j.s !== "ok" || !j.c?.length) throw new Error("No crypto data");
-        const n = j.c.length;
-        return { last:+j.c[n-1], prevClose:(n>1 ? +j.c[n-2] : +j.c[n-1]), t:(j.t?.[n-1] ?? to)*1000, ccy:"USD" };
-      }
+        if (isCrypto){
+            // derive last from latest candle; try fallback exchange if no_data
+            const to = Math.floor(Date.now()/1000);
+            const from = to - 60*60*24; // last 24h
+            const doFetch = (symbol)=>
+            fetchJSON(`https://finnhub.io/api/v1/crypto/candle?symbol=${encodeURIComponent(symbol)}&resolution=1&from=${from}&to=${to}&token=${apiKey}`);
+            let j = await withRetry(()=> doFetch(sym));
+            if (j.s !== "ok" || !j.c?.length){
+            const alt = cryptoFallback(sym);
+            if (alt){
+                j = await withRetry(()=> doFetch(alt));
+                if (j.s !== "ok" || !j.c?.length) throw new Error("No crypto data");
+            }else{
+                throw new Error("No crypto data");
+            }
+            }
+            const n = j.c.length;
+            const last = +j.c[n-1];
+            const prev = n>1 ? +j.c[n-2] : last;
+            const t = (j.t?.[n-1] ?? to)*1000;
+            return { last, prevClose: prev, t, ccy: "USD" };
+        }
 
-      // stocks/ETFs
-      const url = `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(sym)}&token=${apiKey}`;
-      const r = await fetch(url); const j = await r.json();
-      if (j.error) throw new Error(j.error);
-      const last = +((j.c ?? j.price) || j.ask || j.bid);
-      const prev = +(j.pc ?? j.prevClose ?? last);
-      return { last, prevClose: prev, t: (j.t ? j.t*1000 : Date.now()), ccy:"USD" };
-    },
+        // stocks/ETFs
+        const url = `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(sym)}&token=${apiKey}`;
+        const j = await withRetry(()=> fetchJSON(url));
+        const last = +((j.c ?? j.price) || j.ask || j.bid);
+        const prev = +(j.pc ?? j.prevClose ?? last);
+        const t = (j.t ? j.t*1000 : Date.now());
+        return { last, prevClose: prev, t, ccy:"USD" };
+        },
 
     async history(sym, resolution="15"){
-      const to = Math.floor(Date.now()/1000);
-      const from = to - 60*60*24*14;
-      const isFx = sym.startsWith("OANDA:");
-      const isCrypto = !isFx && sym.includes(":");
+        const to = Math.floor(Date.now()/1000);
+        const from = to - 60*60*24*14;
+        const isFx = sym.startsWith("OANDA:");
+        const isCrypto = !isFx && sym.includes(":");
 
-      const base = isFx ? "forex/candle" : (isCrypto ? "crypto/candle" : "stock/candle");
-      const url = `https://finnhub.io/api/v1/${base}?symbol=${encodeURIComponent(sym)}&resolution=${resolution}&from=${from}&to=${to}&token=${apiKey}`;
-      const r = await fetch(url); const j = await r.json();
-      if (j.s!=="ok") return [];
-      return j.t.map((t,i)=>({ t: t*1000, p: j.c[i] }));
+        const fetchCandle = (symbol, base)=>
+            fetchJSON(`https://finnhub.io/api/v1/${base}?symbol=${encodeURIComponent(symbol)}&resolution=${resolution}&from=${from}&to=${to}&token=${apiKey}`);
+
+        if (isFx){
+            const j = await withRetry(()=> fetchCandle(sym, "forex/candle"));
+            if (j.s!=="ok") return [];
+            return j.t.map((t,i)=>({ t: t*1000, p: j.c[i] }));
+        }
+
+        if (isCrypto){
+            let j = await withRetry(()=> fetchCandle(sym, "crypto/candle"));
+            if (j.s!=="ok" || !j.c?.length){
+            const alt = cryptoFallback(sym);
+            if (alt){
+                j = await withRetry(()=> fetchCandle(alt, "crypto/candle"));
+            }
+            }
+            if (j.s!=="ok") return [];
+            return j.t.map((t,i)=>({ t: t*1000, p: j.c[i] }));
+        }
+
+        // stocks
+        const j = await withRetry(()=> fetchCandle(sym, "stock/candle"));
+        if (j.s!=="ok") return [];
+        return j.t.map((t,i)=>({ t: t*1000, p: j.c[i] }));
     }
   }
 };
